@@ -1,0 +1,7 @@
+.{
+    .name = .fastb64z,
+    .version = "1.0.0",
+    .fingerprint = 0x65b0c51b41f292c7,
+    .dependencies = .{},
+    .paths = .{""},
+}
