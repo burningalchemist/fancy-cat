@@ -1,7 +1,5 @@
 const std = @import("std");
-pub const c = @cImport({
-    @cInclude("CoreGraphics/CoreGraphics.h");
-});
+const c = @import("c");
 
 pub fn getDPI() ?f32 {
     const display = getDisplay();

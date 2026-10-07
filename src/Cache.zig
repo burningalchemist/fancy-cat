@@ -1,7 +1,10 @@
-const Self = @This();
 const std = @import("std");
-const Config = @import("config/Config.zig");
+
 const vaxis = @import("vaxis");
+
+const Config = @import("config/Config.zig");
+
+const Self = @This();
 
 pub const Key = struct {
     colorize: bool,

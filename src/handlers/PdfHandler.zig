@@ -1,18 +1,17 @@
-const Self = @This();
 const std = @import("std");
+
+const c = @import("c");
 const fastb64z = @import("fastb64z");
 const vaxis = @import("vaxis");
-const Config = @import("../config/Config.zig");
-const types = @import("./types.zig");
-const Utilities = @import("../utilities/Utilities.zig");
 
-const c = @cImport({
-    @cInclude("fitz-z.h");
-    @cInclude("mupdf/fitz.h");
-    @cInclude("mupdf/pdf.h");
-});
+const Config = @import("../config/Config.zig");
+const Utilities = @import("../utilities/Utilities.zig");
+const types = @import("./types.zig");
+
+const Self = @This();
 
 allocator: std.mem.Allocator,
+io: std.Io,
 ctx: [*c]c.fz_context,
 doc: [*c]c.fz_document,
 total_pages: u16,
@@ -28,6 +27,7 @@ config: *Config,
 
 pub fn init(
     allocator: std.mem.Allocator,
+    io: std.Io,
     path: []const u8,
     config: *Config,
 ) !Self {
@@ -52,6 +52,7 @@ pub fn init(
 
     return .{
         .allocator = allocator,
+        .io = io,
         .ctx = ctx,
         .doc = doc,
         .total_pages = total_pages,
@@ -75,11 +76,11 @@ pub fn deinit(self: *Self) void {
 pub fn reloadDocument(self: *Self) !void {
     const retry_delay = @as(u64, @intFromFloat(self.config.general.retry_delay * @as(f64, std.time.ns_per_s)));
     const timeout = @as(i64, @intFromFloat(self.config.general.timeout * @as(f64, std.time.ms_per_s)));
-    const start_time = std.time.milliTimestamp();
+    const start_time = std.Io.Clock.now(.awake, self.io);
 
     while (true) {
-        const now = std.time.milliTimestamp();
-        if (now - start_time > timeout) {
+        const now = std.Io.Clock.now(.awake, self.io);
+        if (start_time.durationTo(now).toMilliseconds() > timeout) {
             std.debug.print("Failed to reload document\n", .{});
             return types.DocumentError.FailedToOpenDocument;
         }
@@ -90,14 +91,14 @@ pub fn reloadDocument(self: *Self) !void {
         }
 
         const doc = c.fz_open_document_z(self.ctx, self.path.ptr) orelse {
-            std.Thread.sleep(retry_delay);
+            self.io.sleep(.fromNanoseconds(retry_delay), .awake) catch {};
             continue; // try again
         };
         self.doc = doc;
 
         const page_count = c.fz_count_pages_z(self.ctx, self.doc);
         if (page_count == 0) {
-            std.Thread.sleep(retry_delay);
+            self.io.sleep(.fromNanoseconds(retry_delay), .awake) catch {};
             continue; // try again
         }
         self.total_pages = @as(u16, @intCast(page_count));
@@ -150,17 +151,17 @@ pub fn renderPage(
 ) !types.EncodedImage {
     const retry_delay = @as(u64, @intFromFloat(self.config.general.retry_delay * @as(f64, std.time.ns_per_s)));
     const timeout = @as(i64, @intFromFloat(self.config.general.timeout * @as(f64, std.time.ms_per_s)));
-    const start_time = std.time.milliTimestamp();
+    const start_time = std.Io.Clock.now(.awake, self.io);
 
     while (true) {
-        const now = std.time.milliTimestamp();
-        if (now - start_time > timeout) {
+        const now = std.Io.Clock.now(.awake, self.io);
+        if (start_time.durationTo(now).toMilliseconds() > timeout) {
             std.debug.print("Failed to render page\n", .{});
             return types.DocumentError.FailedToRenderPage;
         }
 
         const page = c.fz_load_page_z(self.ctx, self.doc, @as(c_int, @intCast(page_number))) orelse {
-            std.Thread.sleep(retry_delay);
+            self.io.sleep(.fromNanoseconds(retry_delay), .awake) catch {};
             continue;
         };
         defer c.fz_drop_page(self.ctx, page);

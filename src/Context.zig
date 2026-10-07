@@ -1,15 +1,16 @@
 const std = @import("std");
-const vaxis = @import("vaxis");
-const ViewMode = @import("modes/ViewMode.zig");
-const CommandMode = @import("modes/CommandMode.zig");
+
 const fzwatch = @import("fzwatch");
+const vaxis = @import("vaxis");
+pub const panic = vaxis.panic_handler;
+
+const Cache = @import("./Cache.zig");
 const Config = @import("config/Config.zig");
 const DocumentHandler = @import("handlers/DocumentHandler.zig");
-const Cache = @import("./Cache.zig");
-const ReloadIndicatorTimer = @import("services/ReloadIndicatorTimer.zig");
+const CommandMode = @import("modes/CommandMode.zig");
+const ViewMode = @import("modes/ViewMode.zig");
 const History = @import("services/History.zig");
-
-pub const panic = vaxis.panic_handler;
+const ReloadIndicatorTimer = @import("services/ReloadIndicatorTimer.zig");
 
 pub const Event = union(enum) {
     key_press: vaxis.Key,
@@ -26,6 +27,8 @@ pub const ReloadIndicatorState = enum { idle, reload, watching };
 pub const Context = struct {
     const Self = @This();
 
+    io: std.Io,
+    env_map: *std.process.Environ.Map,
     allocator: std.mem.Allocator,
     arena: std.heap.ArenaAllocator,
     should_quit: bool,
@@ -48,7 +51,7 @@ pub const Context = struct {
     reload_indicator_active: bool,
     buf: []u8,
 
-    pub fn init(allocator: std.mem.Allocator, args: [][:0]u8) !Self {
+    pub fn init(allocator: std.mem.Allocator, io: std.Io, env_map: *std.process.Environ.Map, args: []const [:0]const u8) !Self {
         const path = args[1];
         const initial_page = if (args.len == 3)
             try std.fmt.parseInt(u16, args[2], 10)
@@ -57,10 +60,10 @@ pub const Context = struct {
 
         const config = try allocator.create(Config);
         errdefer allocator.destroy(config);
-        config.* = Config.init(allocator);
+        config.* = Config.init(allocator, io, env_map);
         errdefer config.deinit();
 
-        var document_handler = try DocumentHandler.init(allocator, path, initial_page, config);
+        var document_handler = try DocumentHandler.init(allocator, io, path, initial_page, config);
         errdefer document_handler.deinit();
 
         var watcher: ?fzwatch.Watcher = null;
@@ -69,14 +72,16 @@ pub const Context = struct {
             if (watcher) |*w| try w.addFile(path);
         }
 
-        const vx = try vaxis.init(allocator, .{});
+        const vx = try vaxis.init(io, allocator, env_map, .{});
         const buf = try allocator.alloc(u8, 4096);
-        const tty = try vaxis.Tty.init(buf);
+        const tty = try vaxis.Tty.init(io, buf);
         const reload_indicator_timer = ReloadIndicatorTimer.init(config);
-        const history = History.init(allocator, config);
+        const history = History.init(allocator, io, env_map, config);
 
         return .{
             .allocator = allocator,
+            .io = io,
+            .env_map = env_map,
             .arena = std.heap.ArenaAllocator.init(allocator),
             .should_quit = false,
             .tty = tty,
@@ -113,7 +118,7 @@ pub const Context = struct {
 
         if (self.page_info_text.len > 0) self.allocator.free(self.page_info_text);
 
-        self.reload_indicator_timer.deinit();
+        self.reload_indicator_timer.deinit(self.io);
         self.history.deinit();
         self.cache.deinit();
         self.document_handler.deinit();
@@ -130,7 +135,7 @@ pub const Context = struct {
         switch (event) {
             .modified => {
                 const loop = @as(*vaxis.Loop(Event), @ptrCast(@alignCast(context.?)));
-                loop.postEvent(Event.file_changed);
+                loop.postEvent(Event.file_changed) catch undefined;
             },
         }
     }
@@ -139,19 +144,16 @@ pub const Context = struct {
         try watcher.start(.{ .latency = self.config.file_monitor.latency });
     }
 
-    pub fn run(self: *Self) !void {
+    pub fn run(self: *Self, io: std.Io) !void {
         self.current_mode = .{ .view = ViewMode.init(self) };
 
-        var loop: vaxis.Loop(Event) = .{
-            .tty = &self.tty,
-            .vaxis = &self.vx,
-        };
-
-        try loop.init();
+        var loop: vaxis.Loop(Event) = .init(self.io, &self.tty, &self.vx);
         try loop.start();
         defer loop.stop();
         try self.vx.enterAltScreen(self.tty.writer());
-        try self.vx.queryTerminal(self.tty.writer(), 1 * std.time.ns_per_s);
+        const timeout: std.Io.Duration = .fromSeconds(10);
+
+        try self.vx.queryTerminal(self.tty.writer(), timeout);
         try self.vx.setMouseMode(self.tty.writer(), true);
 
         if (self.config.file_monitor.enabled) {
@@ -170,7 +172,7 @@ pub const Context = struct {
                         }
                     }
                     if (need_reload_indicator) {
-                        try self.reload_indicator_timer.start(&loop);
+                        try self.reload_indicator_timer.start(&loop, io);
                         self.reload_indicator_active = true;
                     }
                 }
@@ -178,9 +180,9 @@ pub const Context = struct {
         }
 
         while (!self.should_quit) {
-            loop.pollEvent();
+            try loop.pollEvent();
 
-            while (loop.tryEvent()) |event| {
+            while (try loop.tryEvent()) |event| {
                 try self.update(event);
             }
 
@@ -190,7 +192,7 @@ pub const Context = struct {
             try self.vx.render(buffered);
             try buffered.flush();
 
-            _ = self.arena.reset(.retain_capacity); // clear key actions from heap
+            _ = self.arena.reset(.retain_capacity);
         }
     }
 
@@ -242,7 +244,7 @@ pub const Context = struct {
                 if (self.reload_indicator_active) {
                     if (self.config.general.progress_bar) try self.tty.writer().print("\x1b]9;4;1;100\x07", .{});
                     self.current_reload_indicator_state = .reload;
-                    self.reload_indicator_timer.notifyChange();
+                    self.reload_indicator_timer.notifyChange(self.io);
                 }
             },
             .reload_done => {
@@ -301,7 +303,7 @@ pub const Context = struct {
 
     pub fn drawCurrentPage(self: *Self, win: vaxis.Window) !void {
         if (self.reload_page) {
-            const winsize = try vaxis.Tty.getWinsize(self.tty.fd);
+            const winsize = try self.tty.getWinsize();
             const pix_per_col = try std.math.divCeil(u16, win.screen.width_pix, win.screen.width);
             const pix_per_row = try std.math.divCeil(u16, win.screen.height_pix, win.screen.height);
             const x_pix = winsize.cols * pix_per_col;
@@ -340,7 +342,6 @@ pub const Context = struct {
 
     pub fn drawStatusBar(self: *Self, win: vaxis.Window) !void {
         const arena = self.arena.allocator();
-        defer _ = self.arena.reset(.retain_capacity);
 
         const status_bar = win.child(.{
             .x_off = 0,
@@ -437,17 +438,17 @@ pub const Context = struct {
         var text = item.text;
 
         if (std.mem.eql(u8, text, Config.StatusBar.PATH)) {
-            const cwd = try std.fs.cwd().realpathAlloc(allocator, ".");
+            const cwd = try std.Io.Dir.cwd().realPathFileAlloc(self.io, ".", allocator);
             defer allocator.free(cwd);
 
-            const full_path = try std.fs.cwd().realpathAlloc(allocator, self.document_handler.getPath());
+            const full_path = try std.Io.Dir.cwd().realPathFileAlloc(self.io, self.document_handler.getPath(), allocator);
             defer allocator.free(full_path);
 
             if (std.mem.startsWith(u8, full_path, cwd)) {
                 var path = full_path[cwd.len..];
                 if (path.len > 0 and path[0] == '/') path = path[1..];
                 text = try std.fmt.allocPrint(allocator, "{s}", .{path}); // trim cwd
-            } else if (std.posix.getenv("HOME")) |home| {
+            } else if (self.env_map.get("HOME")) |home| {
                 if (std.mem.startsWith(u8, full_path, home)) {
                     var path = full_path[home.len..];
                     if (path.len > 0 and path[0] == '/') path = path[1..];

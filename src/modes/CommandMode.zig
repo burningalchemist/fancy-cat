@@ -1,10 +1,13 @@
-const Self = @This();
 const std = @import("std");
+
 const vaxis = @import("vaxis");
-const Context = @import("../Context.zig").Context;
-const Config = @import("../config/Config.zig");
-const ViewMode = @import("./ViewMode.zig");
 const TextInput = vaxis.widgets.TextInput;
+
+const Config = @import("../config/Config.zig");
+const Context = @import("../Context.zig").Context;
+const ViewMode = @import("./ViewMode.zig");
+
+const Self = @This();
 
 context: *Context,
 text_input: TextInput,
@@ -55,7 +58,7 @@ pub fn handleKeyStroke(self: *Self, key: vaxis.Key, km: Config.KeyMap) !void {
         }
 
         const history_prefix = self.history_prefix.?;
-        var filtered = std.ArrayList([]const u8){};
+        var filtered = std.ArrayList([]const u8).empty;
         defer filtered.deinit(self.context.allocator);
 
         for (self.context.history.items.items) |cmd| {

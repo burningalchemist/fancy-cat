@@ -31,13 +31,12 @@ pub const KeyMap = struct {
         var keymap = KeyMap{};
         if (val != .object) return keymap;
 
-        inline for (std.meta.fields(KeyMap)) |key| {
-            @field(keymap, key.name) = parseKeyBinding(val.object, key.name, allocator, @field(
+        inline for (@typeInfo(KeyMap).@"struct".field_names) |name| {
+            @field(keymap, name) = parseKeyBinding(val.object, name, allocator, @field(
                 keymap,
-                key.name,
+                name,
             ));
         }
-
         return keymap;
     }
 };
@@ -236,34 +235,30 @@ cache: Cache = .{},
 
 legacy_path: bool = false,
 
-pub fn init(allocator: std.mem.Allocator) Self {
+pub fn init(allocator: std.mem.Allocator, io: std.Io, env_map: *std.process.Environ.Map) Self {
     var self = Self{ .arena = std.heap.ArenaAllocator.init(allocator) };
     const arena_allocator = self.arena.allocator();
 
-    const home = std.process.getEnvVarOwned(allocator, "HOME") catch return self;
-    defer allocator.free(home);
+    const home = env_map.get("HOME") orelse null;
 
     var path: []u8 = "";
-    const xdg_config_home = std.process.getEnvVarOwned(allocator, "XDG_CONFIG_HOME") catch null;
+    const xdg_config_home = env_map.get("XDG_CONFIG_HOME") orelse null;
     if (xdg_config_home) |x| {
         path = std.fmt.allocPrint(allocator, "{s}/fancy-cat/config.json", .{x}) catch return self;
         allocator.free(x);
-    } else path = std.fmt.allocPrint(allocator, "{s}/.config/fancy-cat/config.json", .{home}) catch return self;
+    } else path = std.fmt.allocPrint(allocator, "{?s}/.config/fancy-cat/config.json", .{home}) catch return self;
     defer allocator.free(path);
 
-    var content = std.fs.cwd().readFileAlloc(allocator, path, 1024 * 1024) catch null;
-    if (content == null) {
-        const legacy_path = std.fmt.allocPrint(allocator, "{s}/.fancy-cat", .{home}) catch return self;
-        defer allocator.free(legacy_path);
+    const content = std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(1024 * 1024)) catch null;
 
-        content = std.fs.cwd().readFileAlloc(allocator, legacy_path, 1024 * 1024) catch null;
-        if (content == null) {
-            if (std.fs.path.dirname(path)) |dir| std.fs.cwd().makePath(dir) catch {};
-            const file = std.fs.createFileAbsolute(path, .{}) catch return self;
-            file.close();
-            return self;
+    if (content == null) {
+        if (std.fs.path.dirname(path)) |dir| {
+            std.Io.Dir.cwd().createDirPath(io, dir) catch {};
         }
-        self.legacy_path = true;
+
+        var file = std.Io.Dir.cwd().createFile(io, path, .{}) catch return self;
+        file.close(io);
+        return self;
     }
     defer allocator.free(content.?);
 
@@ -328,16 +323,16 @@ fn parseStyle(obj: std.json.ObjectMap, allocator: std.mem.Allocator, fallback: v
     if (val != .object) return fallback;
 
     var style = fallback;
-    inline for (std.meta.fields(vaxis.Cell.Style)) |field| {
-        if (val.object.get(field.name)) |field_val| {
-            if (comptime std.mem.eql(u8, field.name, "fg") or std.mem.eql(u8, field.name, "bg") or std.mem.eql(u8, field.name, "ul")) {
+    inline for (@typeInfo(vaxis.Cell.Style).@"struct".field_names) |name| {
+        if (val.object.get(name)) |field_val| {
+            if (comptime std.mem.eql(u8, name, "fg") or std.mem.eql(u8, name, "bg") or std.mem.eql(u8, name, "ul")) {
                 if (parseRGB(field_val, allocator)) |rgb| {
-                    @field(style, field.name) = .{ .rgb = rgb };
+                    @field(style, name) = .{ .rgb = rgb };
                 } else {
-                    @field(style, field.name) = std.json.innerParseFromValue(field.type, allocator, field_val, .{}) catch @field(style, field.name);
+                    @field(style, name) = std.json.innerParseFromValue(@TypeOf(@field(style, name)), allocator, field_val, .{}) catch @field(style, name);
                 }
             } else {
-                @field(style, field.name) = std.json.innerParseFromValue(field.type, allocator, field_val, .{}) catch @field(style, field.name);
+                @field(style, name) = std.json.innerParseFromValue(@TypeOf(@field(style, name)), allocator, field_val, .{}) catch @field(style, name);
             }
         }
     }
