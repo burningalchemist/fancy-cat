@@ -8,14 +8,14 @@ const Self = @This();
 
 pub const FileFormat = enum {
     pdf,
-    // epub, // Not implemented yet
+    epub, // Not implemented yet
 
     pub fn fromPath(path: []const u8) !FileFormat {
         if (std.mem.endsWith(u8, path, ".pdf")) {
             return .pdf;
-        } // else if (std.mem.endsWith(u8, path, ".epub")) {
-        //     return .epub;
-        // }
+        } else if (std.mem.endsWith(u8, path, ".epub")) {
+            return .epub;
+        }
         return types.DocumentError.UnsupportedFileFormat;
     }
 };
