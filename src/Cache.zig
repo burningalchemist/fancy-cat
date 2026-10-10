@@ -30,13 +30,11 @@ tail: ?*Node,
 config: *Config,
 lru_size: u16,
 vx: vaxis.Vaxis,
-tty: *const vaxis.Tty,
 
 pub fn init(
     allocator: std.mem.Allocator,
     config: *Config,
     vx: vaxis.Vaxis,
-    tty: *const vaxis.Tty,
 ) Self {
     return .{
         .allocator = allocator,
@@ -46,16 +44,15 @@ pub fn init(
         .config = config,
         .lru_size = config.cache.lru_size,
         .vx = vx,
-        .tty = tty,
     };
 }
 
-pub fn deinit(self: *Self) void {
+pub fn deinit(self: *Self, tty: *vaxis.Tty) void {
     var current = self.head;
     while (current) |node| {
         const next = node.next;
 
-        // self.vx.freeImage(self.tty.anyWriter(), node.value.image.id);
+        self.vx.freeImage(tty.writer(), node.value.image.id);
         self.allocator.destroy(node);
 
         current = next;
@@ -84,7 +81,7 @@ pub fn get(self: *Self, key: Key) ?CachedImage {
     return node.value;
 }
 
-pub fn put(self: *Self, key: Key, image: CachedImage) !bool {
+pub fn put(self: *Self, key: Key, image: CachedImage, tty: *vaxis.Tty) !bool {
     if (self.map.get(key)) |node| {
         self.moveToFront(node);
         return false;
@@ -103,17 +100,17 @@ pub fn put(self: *Self, key: Key, image: CachedImage) !bool {
 
     if (self.map.count() > self.lru_size) {
         const tail_node = self.tail orelse unreachable;
-        _ = self.remove(tail_node.key);
+        _ = self.remove(tail_node.key, tty);
     }
 
     return true;
 }
 
-pub fn remove(self: *Self, key: Key) bool {
+pub fn remove(self: *Self, key: Key, tty: *vaxis.Tty) bool {
     const node = self.map.get(key) orelse return false;
     _ = self.map.remove(key);
 
-    // self.vx.freeImage(self.tty.anyWriter(), node.value.image.id);
+    self.vx.freeImage(tty.writer(), node.value.image.id);
     self.removeNode(node);
     self.allocator.destroy(node);
 

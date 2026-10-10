@@ -96,7 +96,7 @@ pub const Context = struct {
             .current_mode = undefined,
             .history = history,
             .reload_page = true,
-            .cache = Cache.init(allocator, config, vx, &tty),
+            .cache = Cache.init(allocator, config, vx),
             .should_check_cache = config.cache.enabled,
             .reload_indicator_timer = reload_indicator_timer,
             .current_reload_indicator_state = .idle,
@@ -120,7 +120,7 @@ pub const Context = struct {
 
         self.reload_indicator_timer.deinit(self.io);
         self.history.deinit();
-        self.cache.deinit();
+        self.cache.deinit(&self.tty);
         self.document_handler.deinit();
         if (self.config.general.progress_bar) self.tty.writer().writeAll("\x1b]9;4;0;0\x07") catch {};
         self.vx.deinit(self.allocator, self.tty.writer());
@@ -294,7 +294,7 @@ pub const Context = struct {
         );
 
         if (self.should_check_cache) {
-            _ = try self.cache.put(cache_key, .{ .image = image });
+            _ = try self.cache.put(cache_key, .{ .image = image }, &self.tty);
             self.should_check_cache = false;
         }
 
