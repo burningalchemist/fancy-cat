@@ -1,38 +1,10 @@
 const std = @import("std");
 
-const metadata: MetadataType = @import("metadata");
+const metadata = @import("metadata");
 
 const Context = @import("Context.zig").Context;
 
-// Types for build.zig.zon
-// For now metadata is only used in main.zig, but can move it to types.zig if needed eleswhere
-// This wont be necessary once https://github.com/ziglang/zig/pull/22907 is merged
-
-const PackageName = enum { fancy_cat };
-
-const DependencyType = struct {
-    url: ?[]const u8 = null,
-    hash: ?[]const u8 = null,
-    path: ?[]const u8 = null,
-};
-
-const DependenciesType = struct {
-    vaxis: DependencyType,
-    fzwatch: DependencyType,
-    fastb64z: DependencyType,
-};
-
-const MetadataType = struct {
-    name: PackageName,
-    fingerprint: u64,
-    version: []const u8,
-    minimum_zig_version: []const u8,
-    dependencies: DependenciesType,
-    paths: []const []const u8,
-};
-
 pub fn main(init: std.process.Init) !void {
-
     const args = try init.minimal.args.toSlice(init.arena.allocator());
     const io = init.io;
 
