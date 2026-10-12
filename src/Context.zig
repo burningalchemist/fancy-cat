@@ -68,7 +68,7 @@ pub const Context = struct {
 
         var watcher: ?fzwatch.Watcher = null;
         if (config.file_monitor.enabled) {
-            watcher = try fzwatch.Watcher.init(allocator);
+            watcher = try fzwatch.Watcher.init(io, allocator);
             if (watcher) |*w| try w.addFile(path);
         }
 
