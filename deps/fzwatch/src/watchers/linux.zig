@@ -4,6 +4,7 @@ const linux = std.os.linux;
 
 pub const LinuxWatcher = struct {
     allocator: std.mem.Allocator,
+    io: std.Io,
     wd_to_path: std.AutoHashMap(i32, []const u8),
     path_to_wd: std.StringHashMap(i32),
     file_count: u32,
@@ -12,12 +13,13 @@ pub const LinuxWatcher = struct {
     context: ?*anyopaque,
     running: bool,
 
-    pub fn init(allocator: std.mem.Allocator) !LinuxWatcher {
-        const fd = try std.posix.inotify_init1(linux.IN.NONBLOCK);
-        errdefer std.posix.close(fd);
+    pub fn init(io: std.Io, allocator: std.mem.Allocator) !LinuxWatcher {
+        const fd = std.os.linux.inotify_init1(linux.IN.NONBLOCK);
+        errdefer std.os.linux.close(fd);
 
         return LinuxWatcher{
             .allocator = allocator,
+            .io = io,
             .wd_to_path = std.AutoHashMap(i32, []const u8).init(allocator),
             .path_to_wd = std.StringHashMap(i32).init(allocator),
             .file_count = 0,
@@ -32,7 +34,7 @@ pub const LinuxWatcher = struct {
         self.stop();
         self.wd_to_path.deinit();
         self.path_to_wd.deinit();
-        std.posix.close(self.fd);
+        _ = std.os.linux.close(self.fd);
     }
 
     pub fn addFile(self: *LinuxWatcher, path: []const u8) !void {
@@ -41,12 +43,25 @@ pub const LinuxWatcher = struct {
     }
 
     fn _addFile(self: *LinuxWatcher, path: []const u8) !void {
-        const wd = try std.posix.inotify_add_watch(
+        var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+        if (path.len > path_buf.len) {
+            return error.PathTooLong;
+        }
+        @memcpy(path_buf[0..path.len], path);
+        path_buf[path.len] = 0; // Null-terminate the path
+        const path_ptr = path_buf[0..path.len :0].ptr; // Get a pointer to the null-terminated path
+        const rc = std.os.linux.inotify_add_watch(
             self.fd,
-            path,
+            path_ptr,
             linux.IN.MODIFY | linux.IN.CLOSE_WRITE | linux.IN.ATTRIB | linux.IN.MOVE_SELF |
                 linux.IN.DELETE_SELF | linux.IN.IGNORED,
         );
+
+        const err = std.posix.errno(rc);
+        if (err != .SUCCESS) {
+            return std.posix.unexpectedErrno(err);
+        }
+        const wd: i32 = @intCast(rc);
 
         try self.wd_to_path.put(wd, path);
         try self.path_to_wd.put(path, wd);
@@ -55,7 +70,7 @@ pub const LinuxWatcher = struct {
 
     pub fn removeFile(self: *LinuxWatcher, path: []const u8) !void {
         if (self.path_to_wd.get(path)) |wd| {
-            _ = std.posix.inotify_rm_watch(self.fd, wd);
+            _ = std.os.linux.inotify_rm_watch(self.fd, wd);
             _ = self.path_to_wd.remove(path);
             _ = self.wd_to_path.remove(wd);
             self.file_count -= 1;
@@ -90,10 +105,8 @@ pub const LinuxWatcher = struct {
                 &buffer,
             ) catch |err| switch (err) {
                 error.WouldBlock => {
-                    std.Thread.sleep(@as(u64, @intFromFloat(@as(f64, opts.latency) * @as(
-                        f64,
-                        @floatFromInt(std.time.ns_per_s),
-                    ))));
+                    const sleep_ns: u64 = @intFromFloat(@as(f64, opts.latency) * std.time.ns_per_s);
+                    try self.io.sleep(.fromNanoseconds(sleep_ns), .awake);
                     continue;
                 },
                 else => {

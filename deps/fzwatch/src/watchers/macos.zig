@@ -5,6 +5,7 @@ const c = @import("c");
 
 pub const MacosWatcher = struct {
     allocator: std.mem.Allocator,
+    io: std.Io,
     // XXX hold the files as []u8 so we don't need to convert twice?
     files: std.ArrayList(c.CFStringRef),
     stream: c.FSEventStreamRef,
@@ -12,9 +13,10 @@ pub const MacosWatcher = struct {
     running: bool,
     context: ?*anyopaque,
 
-    pub fn init(allocator: std.mem.Allocator) !MacosWatcher {
+    pub fn init(io: std.Io, allocator: std.mem.Allocator) !MacosWatcher {
         return MacosWatcher{
             .allocator = allocator,
+            .io = io,
             .files = std.ArrayList(c.CFStringRef).empty,
             .stream = null,
             .callback = null,
