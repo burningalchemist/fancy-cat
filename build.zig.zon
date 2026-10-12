@@ -5,8 +5,8 @@
     .minimum_zig_version = "0.17.0",
     .dependencies = .{
         .vaxis = .{ 
-            .url = "git+https://github.com/rockorager/libvaxis.git#zig-0.17", 
-            .hash = "vaxis-0.6.0-BWNV_MafDAAEzkVUvrW9NFUqnnMUoeHqrs2mecnD6D7w" 
+            .url = "git+https://github.com/rockorager/libvaxis.git#main",
+            .hash = "vaxis-0.6.0-BWNV_O8ODQBFLRjA4D0q75pHPh63iPu_v0yhpCwsAMaM"
         },
         .fzwatch = .{ .path = "deps/fzwatch" },
         .fastb64z = .{ .path = "deps/fastb64z" },
