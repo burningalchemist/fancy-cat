@@ -2,11 +2,9 @@ const std = @import("std");
 
 fn addMupdfStatic(exe: *std.Build.Step.Compile, b: *std.Build, location: []const u8) void {
     exe.root_module.addIncludePath(b.path("deps/mupdf/include"));
-
     exe.root_module.addLibraryPath(.{ .cwd_relative = b.fmt("{s}/lib", .{location}) });
     exe.root_module.addObjectFile(.{ .cwd_relative = b.fmt("{s}/lib/libmupdf.a", .{location}) });
     exe.root_module.addObjectFile(.{ .cwd_relative = b.fmt("{s}/lib/libmupdf-third.a", .{location}) });
-
     exe.root_module.link_libc = true;
 }
 
@@ -60,10 +58,19 @@ pub fn build(b: *std.Build) void {
     defer make_args.deinit(allocator);
 
     make_args.append(allocator, "make") catch unreachable;
+    make_args.append(allocator, "libs") catch unreachable;
 
     // use as many cores as possible by default (like zig) I dont know how to check for j<N> arg
     const cpu_count = std.Thread.getCpuCount() catch 1;
     make_args.append(allocator, b.fmt("-j{d}", .{cpu_count})) catch unreachable;
+
+    // explicitly define what platform to cross-compile for
+    const target_os = @tagName(target.result.os.tag);
+    const target_arch = @tagName(target.result.cpu.arch);
+    const target_abi = @tagName(target.result.abi);
+
+    make_args.append(allocator, b.fmt("OS={s}", .{target_os})) catch unreachable;
+    make_args.append(allocator, b.fmt("ARCH={s}", .{target_arch})) catch unreachable;
 
     make_args.append(allocator, "-C") catch unreachable;
     make_args.append(allocator, "deps/mupdf") catch unreachable;
@@ -72,14 +79,14 @@ pub fn build(b: *std.Build) void {
     make_args.append(allocator, "XCFLAGS=-w -DTOFU -DTOFU_CJK -DFZ_ENABLE_PDF=1 " ++
         "-DFZ_ENABLE_XPS=0 -DFZ_ENABLE_SVG=0 -DFZ_ENABLE_CBZ=0 " ++
         "-DFZ_ENABLE_IMG=1 -DFZ_ENABLE_HTML=1 -DFZ_ENABLE_EPUB=1") catch unreachable;
-    make_args.append(allocator, "tools=no") catch unreachable;
-    make_args.append(allocator, "apps=no") catch unreachable;
-
     const prefix_arg = b.fmt("prefix={s}", .{prefix});
     make_args.append(allocator, prefix_arg) catch unreachable;
-    make_args.append(allocator, "install") catch unreachable;
+    make_args.append(allocator, "install-libs") catch unreachable;
 
     const mupdf_build_step = b.addSystemCommand(make_args.items);
+    mupdf_build_step.setEnvironmentVariable("CC", b.fmt("zig cc -target {s}-{s}-{s}", .{ target_arch, target_os, target_abi }));
+    mupdf_build_step.setEnvironmentVariable("CXX", b.fmt("zig c++ -target {s}-{s}-{s}", .{ target_arch, target_os, target_abi }));
+    mupdf_build_step.setEnvironmentVariable("AR", "zig ar");
 
     const exe = b.addExecutable(.{
         .name = "fancy-cat",
@@ -87,12 +94,10 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
+            .strip = optimize != .debug,
         }),
     });
     exe.headerpad_max_install_names = true;
-
-    if (target.result.os.tag == .macos) exe.root_module.linkFramework("CoreGraphics", .{});
-    if (target.result.os.tag == .macos) exe.root_module.linkFramework("CoreGraphics", .{});
 
     const deps = .{
         .vaxis = b.dependency("vaxis", .{ .target = target, .optimize = optimize }),
