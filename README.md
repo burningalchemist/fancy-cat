@@ -39,7 +39,7 @@ An example `config.json` and documentation can be found [here](./docs/config.md)
 
 ### Requirements
 
-- Zig version `0.15.2`
+- Zig version `0.17.0`
 - Terminal emulator with the Kitty image protocol (e.g. Kitty, Ghostty, WezTerm, etc.)
 
 ### Build
